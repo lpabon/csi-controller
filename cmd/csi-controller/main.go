@@ -23,20 +23,28 @@ import (
 	"os"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/wait"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/workqueue"
+	utilflag "k8s.io/component-base/cli/flag"
+	csitrans "k8s.io/csi-translation-lib"
 	"k8s.io/klog"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/kubernetes-csi/csi-lib-utils/connection"
+	"github.com/kubernetes-csi/csi-lib-utils/deprecatedflags"
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
 	"github.com/kubernetes-csi/csi-lib-utils/rpc"
 	"github.com/kubernetes-csi/external-attacher/pkg/attacher"
 	"github.com/kubernetes-csi/external-attacher/pkg/controller"
+	ctrl "github.com/kubernetes-csi/external-provisioner/pkg/controller"
+	snapclientset "github.com/kubernetes-csi/external-snapshotter/pkg/client/clientset/versioned"
 	"google.golang.org/grpc"
+	"sigs.k8s.io/sig-storage-lib-external-provisioner/controller"
 )
 
 const (
@@ -49,23 +57,26 @@ const (
 )
 
 type CommonOpts struct {
+	MasterUrl               string
 	Kubeconfig              string
 	Resync                  time.Duration
 	CsiAddress              string
+	LeaderElectionType      string
 	LeaderElectionNamespace string
 	WorkerThreads           int
 	Timeout                 time.Duration
+	RetryIntervalStart      time.Duration
+	RetryIntervalMax        time.Duration
 }
 
-type AttacherOpts struct {
-	AttacherDetachTimeout      time.Duration
-	AttacherRetryIntervalStart time.Duration
-	AttacherRetryIntervalMax   time.Duration
+type ProvisionerOpts struct {
+	ProvisionerVolumeNamePrefix     string
+	ProvisionerVolumeNameUUIDLength string
 }
 
 type CliOpts struct {
 	CommonOpts
-	AttacherOpts
+	ProvisionerOpts
 }
 
 type ControllerClient struct {
@@ -81,6 +92,7 @@ type leaderElection interface {
 // Command line flags
 var (
 	controllerClient ControllerClient
+	featureGates     map[string]bool
 	version          = "unknown"
 
 	showVersion = flag.Bool("version", false, "Show version.")
@@ -91,23 +103,32 @@ func init() {
 
 	// Common
 	flag.StringVar(&c.Kubeconfig, "kubeconfig", "", "Absolute path to the kubeconfig file. Required only when running out of cluster.")
+	flag.StringVar(&c.MasterUrl, "master", "", "Master URL to build a client config from. Either this or kubeconfig needs to be set if the provisioner is being run out of cluster.")
 	flag.StringVar(&c.CsiAddress, "csi-address", "/run/csi/socket", "Address of the CSI driver socket.")
 	flag.DurationVar(&c.Resync, "resync", 10*time.Minute, "Resync interval of the controller.")
 	flag.StringVar(&c.CsiAddress, "leader-election-namespace", "", "Namespace where the leader election resource lives. Defaults to the pod namespace if not set.")
 	flag.IntVar(&c.WorkerThreads, "worker-threads", 10, "Number of attacher worker threads")
 	flag.DurationVar(&c.Timeout, "timeout", 15*time.Second, "Timeout for waiting for driver to be ready")
+	flag.DurationVar(&c.RetryIntervalStart, "retry-interval-start", time.Second, "Initial retry interval of failed create volume or deletion. It doubles with each failure, up to retry-interval-max.")
+	flag.DurationVar(&c.RetryIntervalMax, "retry-interval-max", 5*time.Minute, "Maximum retry interval of failed create volume or deletion.")
 
-	// Attacher
-	flag.DurationVar(&c.AttacherDetachTimeout, "attacher-timeout", 15*time.Second, "Timeout for waiting for attaching or detaching the volume.")
-	flag.DurationVar(&c.AttacherRetryIntervalStart, "attacher-retry-interval-start", time.Second, "Initial retry interval of failed create volume or deletion. It doubles with each failure, up to retry-interval-max.")
-	flag.DurationVar(&c.AttacherRetryIntervalMax, "attacher-retry-interval-max", 5*time.Minute, "Maximum retry interval of failed create volume or deletion.")
+	// Provisioner
+	flag.StringVar(&c.ProvisionerVolumeNamePrefix, "provisioner-volume-name-prefix", "pvc", "Prefix to apply to the name of a created volume.")
+	flag.IntVar(&c.ProvisionerVolumeNameUUIDLength, "provisioner-volume-name-uuid-length", -1, "Truncates generated UUID of a created volume to this length. Defaults behavior is to NOT truncate.")
 }
 
 func main() {
+
+	flag.Var(utilflag.NewMapStringBool(&featureGates), "feature-gates", "A set of key=value pairs that describe feature gates for alpha/experimental features. "+
+		"Options are:\n"+strings.Join(utilfeature.DefaultFeatureGate.KnownFeatures(), "\n"))
+
 	klog.InitFlags(nil)
 	flag.Set("logtostderr", "true")
 	flag.Parse()
-	args := &controllerClient.ControllerArgs
+
+	if err := utilfeature.DefaultMutableFeatureGate.SetFromMap(featureGates); err != nil {
+		klog.Fatal(err)
+	}
 
 	// COMMON ----------------------------------------------------------
 	if *showVersion {
@@ -117,7 +138,8 @@ func main() {
 	klog.Infof("Version: %s", version)
 
 	// Create the client config. Use kubeconfig if given, otherwise assume in-cluster.
-	config, err := buildConfig(args.Kubeconfig)
+	args := &controllerClient.ControllerArgs
+	config, err := buildConfig(args.MasterUrl, args.Kubeconfig)
 	if err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
@@ -136,7 +158,7 @@ func main() {
 
 	factory := informers.NewSharedInformerFactory(controllerClient.KubernetesClientSet, args.Resync)
 	// Connect to CSI.
-	csiConn, err := connection.Connect(args.CsiAddress, connection.OnConnectionLoss(connection.ExitOnConnectionLoss()))
+	csiConn, err := ctrl.Connect(args.CsiAddress)
 	if err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
@@ -149,14 +171,11 @@ func main() {
 	}
 
 	// Find driver name.
-	ctx, cancel := context.WithTimeout(context.Background(), csiTimeout)
-	defer cancel()
-	driverName, err := rpc.GetDriverName(ctx, csiConn)
+	driverName, err := ctrl.GetDriverName(grpcClient, args.Timeout)
 	if err != nil {
-		klog.Error(err.Error())
-		os.Exit(1)
+		klog.Fatalf("Error getting CSI driver name: %s", err)
 	}
-	klog.V(2).Infof("CSI driver name: %q", driverName)
+	klog.V(2).Infof("Detected CSI driver %s", driverName)
 
 	// ControllerService ----------------------------------------------------------
 	supportsService, err := supportsPluginControllerService(ctx, csiConn)
@@ -169,15 +188,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	pluginCapabilities, controllerCapabilities, err := ctrl.GetDriverCapabilities(grpcClient, args.Timeout)
+	if err != nil {
+		klog.Fatalf("Error getting CSI driver capabilities: %s", err)
+	}
+	supportsControllerPublish := controllerCapabilities[csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME]
+	supportsPublishReadOnly := controllerCapabilities[csi.ControllerServiceCapability_RPC_PUBLISH_READONLY]
+
 	// Attacher ----------------------------------------------------------
 	var attacherCtrl *controller.CSIAttachController
 
 	// Find out if the driver supports attach/detach.
-	supportsAttach, supportsReadOnly, err := supportsControllerPublish(ctx, csiConn)
-	if err != nil {
-		klog.Error(err.Error())
-		os.Exit(1)
-	}
 	if supportsAttach {
 		klog.V(2).Infof("CSI driver supports ControllerPublishUnpublish, using real CSI handler")
 		pvLister := factory.Core().V1().PersistentVolumes().Lister()
@@ -193,11 +214,63 @@ func main() {
 			handler,
 			factory.Storage().V1beta1().VolumeAttachments(),
 			factory.Core().V1().PersistentVolumes(),
-			workqueue.NewItemExponentialFailureRateLimiter(args.AttacherRetryIntervalStart, args.AttacherRetryIntervalMax),
-			workqueue.NewItemExponentialFailureRateLimiter(args.AttacherRetryIntervalStart, args.AttacherRetryIntervalMax),
+			workqueue.NewItemExponentialFailureRateLimiter(args.RetryIntervalStart, args.RetryIntervalMax),
+			workqueue.NewItemExponentialFailureRateLimiter(args.RetryIntervalStart, args.RetryIntervalMax),
 		)
 	}
 
+	// Provisioner ----------------------------------------------------
+	// snapclientset.NewForConfig creates a new Clientset for VolumesnapshotV1alpha1Client
+	snapClient, err := snapclientset.NewForConfig(controllerClient.KubernetesClientSet)
+	if err != nil {
+		klog.Fatalf("Failed to create snapshot client: %v", err)
+	}
+	// The controller needs to know what the server version is because out-of-tree
+	// provisioners aren't officially supported until 1.5
+	serverVersion, err := controllerClient.KubernetesClientSet.Discovery().ServerVersion()
+	if err != nil {
+		klog.Fatalf("Error getting server version: %v", err)
+	}
+
+	// Always create a provisioner controller and let it decide what to do with the driver
+	timeStamp := time.Now().UnixNano() / int64(time.Millisecond)
+	identity := strconv.FormatInt(timeStamp, 10) + "-" + strconv.Itoa(rand.Intn(10000)) + "-" + driverName
+
+	provisionerOptions := []func(*controller.ProvisionController) error{
+		controller.LeaderElection(false), // Always disable leader election in provisioner lib. Leader election should be done here in the CSI provisioner level instead.
+		controller.FailedProvisionThreshold(0),
+		controller.FailedDeleteThreshold(0),
+		controller.RateLimiter(workqueue.NewItemExponentialFailureRateLimiter(args.RetryIntervalStart, args.RetryIntervalMax)),
+		controller.Threadiness(args.WorkerThreads),
+		controller.CreateProvisionedPVLimiter(workqueue.DefaultControllerRateLimiter()),
+	}
+
+	translator := csitrans.New()
+
+	supportsMigrationFromInTreePluginName := ""
+	if translator.IsMigratedCSIDriverByName(driverName) {
+		supportsMigrationFromInTreePluginName, err = translator.GetInTreeNameFromCSIName(driverName)
+		if err != nil {
+			klog.Fatalf("Failed to get InTree plugin name for migrated CSI plugin %s: %v", driverName, err)
+		}
+		klog.V(2).Infof("Supports migration from in-tree plugin: %s", supportsMigrationFromInTreePluginName)
+		provisionerOptions = append(provisionerOptions, controller.AdditionalProvisionerNames([]string{supportsMigrationFromInTreePluginName}))
+	}
+
+	// Create the provisioner: it implements the Provisioner interface expected by
+	// the controller
+	csiProvisioner := ctrl.NewCSIProvisioner(clientset, *operationTimeout, identity, *volumeNamePrefix,
+		*volumeNameUUIDLength, grpcClient, snapClient, driverName, pluginCapabilities,
+		controllerCapabilities, supportsMigrationFromInTreePluginName, *strictTopology, translator)
+	provisionController := controller.NewProvisionController(
+		controllerClient.KubernetesClientSet,
+		driverName,
+		csiProvisioner,
+		serverVersion.GitVersion,
+		provisionerOptions...,
+	)
+
+	// Leader runner ----------------------------------------------------
 	run := func(ctx context.Context) {
 		stopCh := ctx.Done()
 		factory.Start(stopCh)
@@ -205,6 +278,9 @@ func main() {
 		if attacherCtrl != nil {
 			attacherCtrl.Run(int(args.WorkerThreads), stopCh)
 		}
+
+		// Always start the provisioner
+		provisionerController.Run(wait.NeverStop)
 	}
 
 	// Name of config map with leader election lock
@@ -220,22 +296,19 @@ func main() {
 	}
 }
 
-func buildConfig(kubeconfig string) (*rest.Config, error) {
-	if kubeconfig != "" {
-		return clientcmd.BuildConfigFromFlags("", kubeconfig)
+func buildConfig(master, kubeconfig string) (*rest.Config, error) {
+	// get the KUBECONFIG from env if specified (useful for local/debug cluster)
+	kubeconfigEnv := os.Getenv("KUBECONFIG")
+
+	if kubeconfigEnv != "" {
+		klog.Infof("Found KUBECONFIG environment variable set, using that..")
+		kubeconfig = &kubeconfigEnv
+	}
+
+	if kubeconfig != "" || master != "" {
+		return clientcmd.BuildConfigFromFlags(master, kubeconfig)
 	}
 	return rest.InClusterConfig()
-}
-
-func supportsControllerPublish(ctx context.Context, csiConn *grpc.ClientConn) (supportsControllerPublish bool, supportsPublishReadOnly bool, err error) {
-	caps, err := rpc.GetControllerCapabilities(ctx, csiConn)
-	if err != nil {
-		return false, false, err
-	}
-
-	supportsControllerPublish = caps[csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME]
-	supportsPublishReadOnly = caps[csi.ControllerServiceCapability_RPC_PUBLISH_READONLY]
-	return supportsControllerPublish, supportsPublishReadOnly, nil
 }
 
 func supportsPluginControllerService(ctx context.Context, csiConn *grpc.ClientConn) (bool, error) {
