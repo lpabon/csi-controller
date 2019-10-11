@@ -16,9 +16,11 @@ limitations under the License.
 
 package main
 
+/*
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"time"
 
@@ -47,70 +49,32 @@ const (
 	leaderElectionTypeConfigMaps = "configmaps"
 )
 
-type CommonOpts struct {
-	Kubeconfig              string
-	Resync                  time.Duration
-	CsiAddress              string
-	LeaderElectionNamespace string
-	WorkerThreads           int
-}
+// Command line flags
+var (
+	kubeconfig    = flag.String("kubeconfig", "", "Absolute path to the kubeconfig file. Required only when running out of cluster.")
+	resync        = flag.Duration("resync", 10*time.Minute, "Resync interval of the controller.")
+	csiAddress    = flag.String("csi-address", "/run/csi/socket", "Address of the CSI driver socket.")
+	showVersion   = flag.Bool("version", false, "Show version.")
+	timeout       = flag.Duration("timeout", 15*time.Second, "Timeout for waiting for attaching or detaching the volume.")
+	workerThreads = flag.Uint("worker-threads", 10, "Number of attacher worker threads")
 
-type AttacherOpts struct {
-	AttacherDetachTimeout      time.Duration
-	AttacherRetryIntervalStart time.Duration
-	AttacherRetryIntervalMax   time.Duration
-}
+	retryIntervalStart = flag.Duration("retry-interval-start", time.Second, "Initial retry interval of failed create volume or deletion. It doubles with each failure, up to retry-interval-max.")
+	retryIntervalMax   = flag.Duration("retry-interval-max", 5*time.Minute, "Maximum retry interval of failed create volume or deletion.")
 
-type CliOpts struct {
-	CommonOpts
-	AttacherOpts
-}
+	enableLeaderElection    = flag.Bool("leader-election", false, "Enable leader election.")
+	leaderElectionNamespace = flag.String("leader-election-namespace", "", "Namespace where the leader election resource lives. Defaults to the pod namespace if not set.")
+)
 
-type ControllerClient struct {
-	ControllerArgs      CliOpts
-	KubernetesClientSet string
-}
+var (
+	version = "unknown"
+)
 
 type leaderElection interface {
 	Run() error
 	WithNamespace(namespace string)
 }
 
-// Command line flags
-var (
-	controllerClient ControllerClient
-	version          = "unknown"
-
-	showVersion = flag.Bool("version", false, "Show version.")
-)
-
-func init() {
-	c := &controllerClient.ControllerArgs
-
-	// Common
-	flag.StringVar(&c.Kubeconfig, "kubeconfig", "", "Absolute path to the kubeconfig file. Required only when running out of cluster.")
-	flag.StringVar(&c.CsiAddress, "csi-address", "/run/csi/socket", "Address of the CSI driver socket.")
-	flag.DurationVar(&c.Resync, "resync", 10*time.Minute, "Resync interval of the controller.")
-	flag.StringVar(&c.CsiAddress, "leader-election-namespace", "", "Namespace where the leader election resource lives. Defaults to the pod namespace if not set.")
-	flag.IntVar(&c.WorkerThreads, "worker-threads", 10, "Number of attacher worker threads")
-
-	// Attacher
-	flag.DurationVar(&c.AttacherDetachTimeout, "timeout", 15*time.Second, "Timeout for waiting for attaching or detaching the volume.")
-	flag.DurationVar(&c.AttacherRetryIntervalStart, "retry-interval-start", time.Second, "Initial retry interval of failed create volume or deletion. It doubles with each failure, up to retry-interval-max.")
-	flag.DurationVar(&c.AttacherRetryIntervalMax, "retry-interval-max", 5*time.Minute, "Maximum retry interval of failed create volume or deletion.")
-}
-
-func main() {
-	klog.InitFlags(nil)
-	flag.Set("logtostderr", "true")
-	flag.Parse()
-
-	// COMMON ----------------------------------------------------------
-	if *showVersion {
-		fmt.Println(os.Args[0], version)
-		return
-	}
-	klog.Infof("Version: %s", version)
+func Attacher() {
 
 	// Create the client config. Use kubeconfig if given, otherwise assume in-cluster.
 	config, err := buildConfig(*kubeconfig)
@@ -124,7 +88,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	controllerClient.KubernetesClientSet, err = kubernetes.NewForConfig(config)
+	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
@@ -155,7 +119,6 @@ func main() {
 	}
 	klog.V(2).Infof("CSI driver name: %q", csiAttacher)
 
-	// Attacher ----------------------------------------------------------
 	supportsService, err := supportsPluginControllerService(ctx, csiConn)
 	if err != nil {
 		klog.Error(err.Error())
@@ -201,16 +164,20 @@ func main() {
 		ctrl.Run(int(*workerThreads), stopCh)
 	}
 
-	// Name of config map with leader election lock
-	lockName := "external-attacher-leader-" + csiAttacher
-	le := leaderelection.NewLeaderElection(clientset, lockName, run)
+	if !*enableLeaderElection {
+		run(context.TODO())
+	} else {
+		// Name of config map with leader election lock
+		lockName := "external-attacher-leader-" + csiAttacher
+		le := leaderelection.NewLeaderElection(clientset, lockName, run)
 
-	if *leaderElectionNamespace != "" {
-		le.WithNamespace(*leaderElectionNamespace)
-	}
+		if *leaderElectionNamespace != "" {
+			le.WithNamespace(*leaderElectionNamespace)
+		}
 
-	if err := le.Run(); err != nil {
-		klog.Fatalf("failed to initialize leader election: %v", err)
+		if err := le.Run(); err != nil {
+			klog.Fatalf("failed to initialize leader election: %v", err)
+		}
 	}
 }
 
@@ -240,3 +207,4 @@ func supportsPluginControllerService(ctx context.Context, csiConn *grpc.ClientCo
 
 	return caps[csi.PluginCapability_Service_CONTROLLER_SERVICE], nil
 }
+*/
