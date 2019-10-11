@@ -134,7 +134,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	factory := informers.NewSharedInformerFactory(controllerClient.KubernetesClientSet, *args.Resync)
+	factory := informers.NewSharedInformerFactory(controllerClient.KubernetesClientSet, args.Resync)
 	// Connect to CSI.
 	csiConn, err := connection.Connect(args.CsiAddress, connection.OnConnectionLoss(connection.ExitOnConnectionLoss()))
 	if err != nil {
@@ -142,7 +142,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = rpc.ProbeForever(csiConn, *args.Timeout)
+	err = rpc.ProbeForever(csiConn, args.Timeout)
 	if err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
@@ -165,7 +165,6 @@ func main() {
 	}
 
 	if !supportsService {
-		handler = controller.NewTrivialHandler(clientset)
 		klog.Error("CSI driver does not support Plugin Controller Service")
 		os.Exit(1)
 	}
@@ -186,16 +185,16 @@ func main() {
 		vaLister := factory.Storage().V1beta1().VolumeAttachments().Lister()
 		csiNodeLister := factory.Storage().V1beta1().CSINodes().Lister()
 		attacher := attacher.NewAttacher(csiConn)
-		handler = controller.NewCSIHandler(clientset, csiAttacher, attacher, pvLister, nodeLister, csiNodeLister, vaLister, timeout, supportsReadOnly)
+		handler := controller.NewCSIHandler(controllerClient.KubernetesClientSet, driverName, attacher, pvLister, nodeLister, csiNodeLister, vaLister, &args.Timeout, supportsReadOnly)
 
-		attacherctrl = controller.NewCSIAttachController(
-			clientset,
-			csiAttacher,
+		attacherCtrl = controller.NewCSIAttachController(
+			controllerClient.KubernetesClientSet,
+			driverName,
 			handler,
 			factory.Storage().V1beta1().VolumeAttachments(),
 			factory.Core().V1().PersistentVolumes(),
-			workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
-			workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
+			workqueue.NewItemExponentialFailureRateLimiter(args.AttacherRetryIntervalStart, args.AttacherRetryIntervalMax),
+			workqueue.NewItemExponentialFailureRateLimiter(args.AttacherRetryIntervalStart, args.AttacherRetryIntervalMax),
 		)
 	}
 
@@ -204,16 +203,16 @@ func main() {
 		factory.Start(stopCh)
 
 		if attacherCtrl != nil {
-			attacherctrl.Run(int(*workerThreads), stopCh)
+			attacherCtrl.Run(int(args.WorkerThreads), stopCh)
 		}
 	}
 
 	// Name of config map with leader election lock
-	lockName := "csi-controller-leader-" + csiAttacher
-	le := leaderelection.NewLeaderElection(clientset, lockName, run)
+	lockName := "csi-controller-leader-" + driverName
+	le := leaderelection.NewLeaderElection(controllerClient.KubernetesClientSet, lockName, run)
 
-	if *leaderElectionNamespace != "" {
-		le.WithNamespace(*leaderElectionNamespace)
+	if args.LeaderElectionNamespace != "" {
+		le.WithNamespace(args.LeaderElectionNamespace)
 	}
 
 	if err := le.Run(); err != nil {
