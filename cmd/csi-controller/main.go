@@ -158,55 +158,58 @@ func main() {
 	}
 	klog.V(2).Infof("CSI driver name: %q", driverName)
 
-	// Attacher ----------------------------------------------------------
+	// ControllerService ----------------------------------------------------------
 	supportsService, err := supportsPluginControllerService(ctx, csiConn)
 	if err != nil {
 		klog.Error(err.Error())
-		os.Exit(1)
 	}
 
 	if !supportsService {
 		handler = controller.NewTrivialHandler(clientset)
-		klog.V(2).Infof("CSI driver does not support Plugin Controller Service, using trivial handler")
-	} else {
-		// Find out if the driver supports attach/detach.
-		supportsAttach, supportsReadOnly, err := supportsControllerPublish(ctx, csiConn)
-		if err != nil {
-			klog.Error(err.Error())
-			os.Exit(1)
-		}
-		if supportsAttach {
-			klog.V(2).Infof("CSI driver supports ControllerPublishUnpublish, using real CSI handler")
-			pvLister := factory.Core().V1().PersistentVolumes().Lister()
-			nodeLister := factory.Core().V1().Nodes().Lister()
-			vaLister := factory.Storage().V1beta1().VolumeAttachments().Lister()
-			csiNodeLister := factory.Storage().V1beta1().CSINodes().Lister()
-			attacher := attacher.NewAttacher(csiConn)
-			handler = controller.NewCSIHandler(clientset, csiAttacher, attacher, pvLister, nodeLister, csiNodeLister, vaLister, timeout, supportsReadOnly)
-		} else {
-			handler = controller.NewTrivialHandler(clientset)
-			klog.V(2).Infof("CSI driver does not support ControllerPublishUnpublish, using trivial handler")
-		}
+		klog.Error("CSI driver does not support Plugin Controller Service")
+		os.Exit(1)
 	}
 
-	ctrl := controller.NewCSIAttachController(
-		clientset,
-		csiAttacher,
-		handler,
-		factory.Storage().V1beta1().VolumeAttachments(),
-		factory.Core().V1().PersistentVolumes(),
-		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
-		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
-	)
+	// Attacher ----------------------------------------------------------
+	var attacherCtrl *controller.CSIAttachController
+
+	// Find out if the driver supports attach/detach.
+	supportsAttach, supportsReadOnly, err := supportsControllerPublish(ctx, csiConn)
+	if err != nil {
+		klog.Error(err.Error())
+		os.Exit(1)
+	}
+	if supportsAttach {
+		klog.V(2).Infof("CSI driver supports ControllerPublishUnpublish, using real CSI handler")
+		pvLister := factory.Core().V1().PersistentVolumes().Lister()
+		nodeLister := factory.Core().V1().Nodes().Lister()
+		vaLister := factory.Storage().V1beta1().VolumeAttachments().Lister()
+		csiNodeLister := factory.Storage().V1beta1().CSINodes().Lister()
+		attacher := attacher.NewAttacher(csiConn)
+		handler = controller.NewCSIHandler(clientset, csiAttacher, attacher, pvLister, nodeLister, csiNodeLister, vaLister, timeout, supportsReadOnly)
+
+		attacherctrl = controller.NewCSIAttachController(
+			clientset,
+			csiAttacher,
+			handler,
+			factory.Storage().V1beta1().VolumeAttachments(),
+			factory.Core().V1().PersistentVolumes(),
+			workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
+			workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax),
+		)
+	}
 
 	run := func(ctx context.Context) {
 		stopCh := ctx.Done()
 		factory.Start(stopCh)
-		ctrl.Run(int(*workerThreads), stopCh)
+
+		if attacherCtrl != nil {
+			attacherctrl.Run(int(*workerThreads), stopCh)
+		}
 	}
 
 	// Name of config map with leader election lock
-	lockName := "external-attacher-leader-" + csiAttacher
+	lockName := "csi-controller-leader-" + csiAttacher
 	le := leaderelection.NewLeaderElection(clientset, lockName, run)
 
 	if *leaderElectionNamespace != "" {
