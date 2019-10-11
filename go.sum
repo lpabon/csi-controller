@@ -228,6 +228,7 @@ k8s.io/client-go v0.0.0-20190404070123-5e968874f268/go.mod h1:bIEHXHbykaOlj+pgLl
 k8s.io/client-go v0.0.0-20190612125919-5c45477a8ae7/go.mod h1:ElCnOBWqvEffJopQHDgJf1jrf7j/f2rNbGv6uUkuHrU=
 k8s.io/client-go v0.0.0-20190620085101-78d2af792bab h1:E8Fecph0qbNsAbijJJQryKu4Oi9QTp5cVpjTE+nqg6g=
 k8s.io/client-go v0.0.0-20190620085101-78d2af792bab/go.mod h1:E95RaSlHr79aHaX0aGSwcPNfygDiPKOVXdmivCIZT0k=
+k8s.io/client-go v11.0.0+incompatible h1:LBbX2+lOwY9flffWlJM7f1Ct8V2SRNiMRDFeiwnJo9o=
 k8s.io/client-go v11.0.0+incompatible/go.mod h1:7vJpHMYJwNQCWgzmNV+VYUl1zCObLyodBc8nIyt8L5s=
 k8s.io/cloud-provider v0.0.0-20190404071634-3b2502dc4098/go.mod h1:5tU+bsXBBO00KSoglvw7rfkFKx0VbivZllUuybpGQp0=
 k8s.io/cloud-provider v0.0.0-20190614051103-08f4196f6866 h1:JZulKIHEu6CqwmMBtJmpHxDokwd97b/KTxQRWeR0dLs=

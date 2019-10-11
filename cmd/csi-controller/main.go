@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"time"
 
@@ -53,6 +54,7 @@ type CommonOpts struct {
 	CsiAddress              string
 	LeaderElectionNamespace string
 	WorkerThreads           int
+	Timeout                 time.Duration
 }
 
 type AttacherOpts struct {
@@ -68,7 +70,7 @@ type CliOpts struct {
 
 type ControllerClient struct {
 	ControllerArgs      CliOpts
-	KubernetesClientSet string
+	KubernetesClientSet *kubernetes.Clientset
 }
 
 type leaderElection interface {
@@ -93,17 +95,19 @@ func init() {
 	flag.DurationVar(&c.Resync, "resync", 10*time.Minute, "Resync interval of the controller.")
 	flag.StringVar(&c.CsiAddress, "leader-election-namespace", "", "Namespace where the leader election resource lives. Defaults to the pod namespace if not set.")
 	flag.IntVar(&c.WorkerThreads, "worker-threads", 10, "Number of attacher worker threads")
+	flag.DurationVar(&c.Timeout, "timeout", 15*time.Second, "Timeout for waiting for driver to be ready")
 
 	// Attacher
-	flag.DurationVar(&c.AttacherDetachTimeout, "timeout", 15*time.Second, "Timeout for waiting for attaching or detaching the volume.")
-	flag.DurationVar(&c.AttacherRetryIntervalStart, "retry-interval-start", time.Second, "Initial retry interval of failed create volume or deletion. It doubles with each failure, up to retry-interval-max.")
-	flag.DurationVar(&c.AttacherRetryIntervalMax, "retry-interval-max", 5*time.Minute, "Maximum retry interval of failed create volume or deletion.")
+	flag.DurationVar(&c.AttacherDetachTimeout, "attacher-timeout", 15*time.Second, "Timeout for waiting for attaching or detaching the volume.")
+	flag.DurationVar(&c.AttacherRetryIntervalStart, "attacher-retry-interval-start", time.Second, "Initial retry interval of failed create volume or deletion. It doubles with each failure, up to retry-interval-max.")
+	flag.DurationVar(&c.AttacherRetryIntervalMax, "attacher-retry-interval-max", 5*time.Minute, "Maximum retry interval of failed create volume or deletion.")
 }
 
 func main() {
 	klog.InitFlags(nil)
 	flag.Set("logtostderr", "true")
 	flag.Parse()
+	args := &controllerClient.ControllerArgs
 
 	// COMMON ----------------------------------------------------------
 	if *showVersion {
@@ -113,13 +117,13 @@ func main() {
 	klog.Infof("Version: %s", version)
 
 	// Create the client config. Use kubeconfig if given, otherwise assume in-cluster.
-	config, err := buildConfig(*kubeconfig)
+	config, err := buildConfig(args.Kubeconfig)
 	if err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
 	}
 
-	if *workerThreads == 0 {
+	if args.WorkerThreads == 0 {
 		klog.Error("option -worker-threads must be greater than zero")
 		os.Exit(1)
 	}
@@ -130,16 +134,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	factory := informers.NewSharedInformerFactory(clientset, *resync)
-	var handler controller.Handler
+	factory := informers.NewSharedInformerFactory(controllerClient.KubernetesClientSet, *args.Resync)
 	// Connect to CSI.
-	csiConn, err := connection.Connect(*csiAddress, connection.OnConnectionLoss(connection.ExitOnConnectionLoss()))
+	csiConn, err := connection.Connect(args.CsiAddress, connection.OnConnectionLoss(connection.ExitOnConnectionLoss()))
 	if err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
 	}
 
-	err = rpc.ProbeForever(csiConn, *timeout)
+	err = rpc.ProbeForever(csiConn, *args.Timeout)
 	if err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
@@ -148,12 +151,12 @@ func main() {
 	// Find driver name.
 	ctx, cancel := context.WithTimeout(context.Background(), csiTimeout)
 	defer cancel()
-	csiAttacher, err := rpc.GetDriverName(ctx, csiConn)
+	driverName, err := rpc.GetDriverName(ctx, csiConn)
 	if err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
 	}
-	klog.V(2).Infof("CSI driver name: %q", csiAttacher)
+	klog.V(2).Infof("CSI driver name: %q", driverName)
 
 	// Attacher ----------------------------------------------------------
 	supportsService, err := supportsPluginControllerService(ctx, csiConn)
@@ -161,6 +164,7 @@ func main() {
 		klog.Error(err.Error())
 		os.Exit(1)
 	}
+
 	if !supportsService {
 		handler = controller.NewTrivialHandler(clientset)
 		klog.V(2).Infof("CSI driver does not support Plugin Controller Service, using trivial handler")
@@ -172,13 +176,13 @@ func main() {
 			os.Exit(1)
 		}
 		if supportsAttach {
+			klog.V(2).Infof("CSI driver supports ControllerPublishUnpublish, using real CSI handler")
 			pvLister := factory.Core().V1().PersistentVolumes().Lister()
 			nodeLister := factory.Core().V1().Nodes().Lister()
 			vaLister := factory.Storage().V1beta1().VolumeAttachments().Lister()
 			csiNodeLister := factory.Storage().V1beta1().CSINodes().Lister()
 			attacher := attacher.NewAttacher(csiConn)
 			handler = controller.NewCSIHandler(clientset, csiAttacher, attacher, pvLister, nodeLister, csiNodeLister, vaLister, timeout, supportsReadOnly)
-			klog.V(2).Infof("CSI driver supports ControllerPublishUnpublish, using real CSI handler")
 		} else {
 			handler = controller.NewTrivialHandler(clientset)
 			klog.V(2).Infof("CSI driver does not support ControllerPublishUnpublish, using trivial handler")

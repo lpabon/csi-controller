@@ -16,7 +16,6 @@ limitations under the License.
 
 package main
 
-/*
 import (
 	"context"
 	"flag"
@@ -40,101 +39,10 @@ import (
 	"google.golang.org/grpc"
 )
 
-const (
+func Attacher(cc *ControllerClient) {
 
-	// Default timeout of short CSI calls like GetPluginInfo
-	csiTimeout = time.Second
-
-	leaderElectionTypeLeases     = "leases"
-	leaderElectionTypeConfigMaps = "configmaps"
-)
-
-// Command line flags
-var (
-	kubeconfig    = flag.String("kubeconfig", "", "Absolute path to the kubeconfig file. Required only when running out of cluster.")
-	resync        = flag.Duration("resync", 10*time.Minute, "Resync interval of the controller.")
-	csiAddress    = flag.String("csi-address", "/run/csi/socket", "Address of the CSI driver socket.")
-	showVersion   = flag.Bool("version", false, "Show version.")
-	timeout       = flag.Duration("timeout", 15*time.Second, "Timeout for waiting for attaching or detaching the volume.")
-	workerThreads = flag.Uint("worker-threads", 10, "Number of attacher worker threads")
-
-	retryIntervalStart = flag.Duration("retry-interval-start", time.Second, "Initial retry interval of failed create volume or deletion. It doubles with each failure, up to retry-interval-max.")
-	retryIntervalMax   = flag.Duration("retry-interval-max", 5*time.Minute, "Maximum retry interval of failed create volume or deletion.")
-
-	enableLeaderElection    = flag.Bool("leader-election", false, "Enable leader election.")
-	leaderElectionNamespace = flag.String("leader-election-namespace", "", "Namespace where the leader election resource lives. Defaults to the pod namespace if not set.")
-)
-
-var (
-	version = "unknown"
-)
-
-type leaderElection interface {
-	Run() error
-	WithNamespace(namespace string)
-}
-
-func Attacher() {
-
-	// Create the client config. Use kubeconfig if given, otherwise assume in-cluster.
-	config, err := buildConfig(*kubeconfig)
-	if err != nil {
-		klog.Error(err.Error())
-		os.Exit(1)
-	}
-
-	if *workerThreads == 0 {
-		klog.Error("option -worker-threads must be greater than zero")
-		os.Exit(1)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		klog.Error(err.Error())
-		os.Exit(1)
-	}
-
-	factory := informers.NewSharedInformerFactory(clientset, *resync)
 	var handler controller.Handler
-	// Connect to CSI.
-	csiConn, err := connection.Connect(*csiAddress, connection.OnConnectionLoss(connection.ExitOnConnectionLoss()))
-	if err != nil {
-		klog.Error(err.Error())
-		os.Exit(1)
-	}
 
-	err = rpc.ProbeForever(csiConn, *timeout)
-	if err != nil {
-		klog.Error(err.Error())
-		os.Exit(1)
-	}
-
-	// Find driver name.
-	ctx, cancel := context.WithTimeout(context.Background(), csiTimeout)
-	defer cancel()
-	csiAttacher, err := rpc.GetDriverName(ctx, csiConn)
-	if err != nil {
-		klog.Error(err.Error())
-		os.Exit(1)
-	}
-	klog.V(2).Infof("CSI driver name: %q", csiAttacher)
-
-	supportsService, err := supportsPluginControllerService(ctx, csiConn)
-	if err != nil {
-		klog.Error(err.Error())
-		os.Exit(1)
-	}
-	if !supportsService {
-		handler = controller.NewTrivialHandler(clientset)
-		klog.V(2).Infof("CSI driver does not support Plugin Controller Service, using trivial handler")
-	} else {
-		// Find out if the driver supports attach/detach.
-		supportsAttach, supportsReadOnly, err := supportsControllerPublish(ctx, csiConn)
-		if err != nil {
-			klog.Error(err.Error())
-			os.Exit(1)
-		}
-		if supportsAttach {
 			pvLister := factory.Core().V1().PersistentVolumes().Lister()
 			nodeLister := factory.Core().V1().Nodes().Lister()
 			vaLister := factory.Storage().V1beta1().VolumeAttachments().Lister()
@@ -142,11 +50,6 @@ func Attacher() {
 			attacher := attacher.NewAttacher(csiConn)
 			handler = controller.NewCSIHandler(clientset, csiAttacher, attacher, pvLister, nodeLister, csiNodeLister, vaLister, timeout, supportsReadOnly)
 			klog.V(2).Infof("CSI driver supports ControllerPublishUnpublish, using real CSI handler")
-		} else {
-			handler = controller.NewTrivialHandler(clientset)
-			klog.V(2).Infof("CSI driver does not support ControllerPublishUnpublish, using trivial handler")
-		}
-	}
 
 	ctrl := controller.NewCSIAttachController(
 		clientset,
