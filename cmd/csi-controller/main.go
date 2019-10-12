@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -35,16 +36,16 @@ import (
 	"k8s.io/klog"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/kubernetes-csi/csi-lib-utils/connection"
-	"github.com/kubernetes-csi/csi-lib-utils/deprecatedflags"
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
 	"github.com/kubernetes-csi/csi-lib-utils/rpc"
-	"github.com/kubernetes-csi/external-attacher/pkg/attacher"
-	"github.com/kubernetes-csi/external-attacher/pkg/controller"
 	ctrl "github.com/kubernetes-csi/external-provisioner/pkg/controller"
 	snapclientset "github.com/kubernetes-csi/external-snapshotter/pkg/client/clientset/versioned"
-	"google.golang.org/grpc"
 	"sigs.k8s.io/sig-storage-lib-external-provisioner/controller"
+
+	"github.com/kubernetes-csi/external-attacher/pkg/attacher"
+	attacherctl "github.com/kubernetes-csi/external-attacher/pkg/controller"
+
+	"google.golang.org/grpc"
 )
 
 const (
@@ -71,7 +72,7 @@ type CommonOpts struct {
 
 type ProvisionerOpts struct {
 	ProvisionerVolumeNamePrefix     string
-	ProvisionerVolumeNameUUIDLength string
+	ProvisionerVolumeNameUUIDLength int
 }
 
 type CliOpts struct {
@@ -171,13 +172,15 @@ func main() {
 	}
 
 	// Find driver name.
-	driverName, err := ctrl.GetDriverName(grpcClient, args.Timeout)
+	driverName, err := ctrl.GetDriverName(csiConn, args.Timeout)
 	if err != nil {
 		klog.Fatalf("Error getting CSI driver name: %s", err)
 	}
 	klog.V(2).Infof("Detected CSI driver %s", driverName)
 
 	// ControllerService ----------------------------------------------------------
+	ctx, cancel := context.WithTimeout(context.Background(), csiTimeout)
+	defer cancel()
 	supportsService, err := supportsPluginControllerService(ctx, csiConn)
 	if err != nil {
 		klog.Error(err.Error())
@@ -188,15 +191,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	pluginCapabilities, controllerCapabilities, err := ctrl.GetDriverCapabilities(grpcClient, args.Timeout)
+	pluginCapabilities, controllerCapabilities, err := ctrl.GetDriverCapabilities(csiConn, args.Timeout)
 	if err != nil {
 		klog.Fatalf("Error getting CSI driver capabilities: %s", err)
 	}
-	supportsControllerPublish := controllerCapabilities[csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME]
-	supportsPublishReadOnly := controllerCapabilities[csi.ControllerServiceCapability_RPC_PUBLISH_READONLY]
+	supportsAttach := controllerCapabilities[csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME]
+	supportsReadOnly := controllerCapabilities[csi.ControllerServiceCapability_RPC_PUBLISH_READONLY]
 
 	// Attacher ----------------------------------------------------------
-	var attacherCtrl *controller.CSIAttachController
+	var attacherCtrl *attacherctl.CSIAttachController
 
 	// Find out if the driver supports attach/detach.
 	if supportsAttach {
@@ -206,9 +209,9 @@ func main() {
 		vaLister := factory.Storage().V1beta1().VolumeAttachments().Lister()
 		csiNodeLister := factory.Storage().V1beta1().CSINodes().Lister()
 		attacher := attacher.NewAttacher(csiConn)
-		handler := controller.NewCSIHandler(controllerClient.KubernetesClientSet, driverName, attacher, pvLister, nodeLister, csiNodeLister, vaLister, &args.Timeout, supportsReadOnly)
+		handler := attacherctl.NewCSIHandler(controllerClient.KubernetesClientSet, driverName, attacher, pvLister, nodeLister, csiNodeLister, vaLister, &args.Timeout, supportsReadOnly)
 
-		attacherCtrl = controller.NewCSIAttachController(
+		attacherCtrl = attacherctl.NewCSIAttachController(
 			controllerClient.KubernetesClientSet,
 			driverName,
 			handler,
@@ -260,7 +263,7 @@ func main() {
 	// Create the provisioner: it implements the Provisioner interface expected by
 	// the controller
 	csiProvisioner := ctrl.NewCSIProvisioner(clientset, *operationTimeout, identity, *volumeNamePrefix,
-		*volumeNameUUIDLength, grpcClient, snapClient, driverName, pluginCapabilities,
+		*volumeNameUUIDLength, csiConn, snapClient, driverName, pluginCapabilities,
 		controllerCapabilities, supportsMigrationFromInTreePluginName, *strictTopology, translator)
 	provisionController := controller.NewProvisionController(
 		controllerClient.KubernetesClientSet,
