@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
 	"time"
 
@@ -281,7 +282,6 @@ func main() {
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt)
 		<-c
-		close(stopCh)
 	}
 
 	// Name of config map with leader election lock

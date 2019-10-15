@@ -19,21 +19,15 @@ package main
 import (
 	"context"
 	"os"
-	"os/signal"
-
-	"google.golang.org/grpc"
 
 	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
-	csirpc "github.com/kubernetes-csi/csi-lib-utils/rpc"
 	"github.com/kubernetes-csi/external-snapshotter/pkg/controller"
 	"github.com/kubernetes-csi/external-snapshotter/pkg/snapshotter"
 
+	clientset "github.com/kubernetes-csi/external-snapshotter/pkg/client/clientset/versioned"
 	snapshotscheme "github.com/kubernetes-csi/external-snapshotter/pkg/client/clientset/versioned/scheme"
 	informers "github.com/kubernetes-csi/external-snapshotter/pkg/client/informers/externalversions"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
@@ -49,7 +43,14 @@ func Snapshotter(cc *ControllerClient) (func(ctx context.Context), error) {
 
 	klog.Info("Driver %s supports snapshots", cc.DriverName)
 
+	snapClient, err := clientset.NewForConfig(cc.RestConfig)
+	if err != nil {
+		klog.Errorf("Error building snapshot clientset: %s", err.Error())
+		os.Exit(1)
+	}
+
 	// initialize
+	args := cc.ControllerArgs
 	factory := informers.NewSharedInformerFactory(snapClient, args.Resync)
 	coreFactory := coreinformers.NewSharedInformerFactory(cc.KubernetesClientSet, args.Resync)
 
@@ -112,7 +113,7 @@ func Snapshotter(cc *ControllerClient) (func(ctx context.Context), error) {
 		stopCh := make(chan struct{})
 		factory.Start(stopCh)
 		coreFactory.Start(stopCh)
-		go ctrl.Run(threads, stopCh)
+		go ctrl.Run(args.WorkerThreads, stopCh)
 	}
 
 	return run, nil
