@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/container-storage-interface/spec/lib/go/csi"
 	ctrl "github.com/kubernetes-csi/external-provisioner/pkg/controller"
 	snapclientset "github.com/kubernetes-csi/external-snapshotter/pkg/client/clientset/versioned"
 	"sigs.k8s.io/sig-storage-lib-external-provisioner/controller"
@@ -33,11 +34,16 @@ import (
 	csitranslationlib "k8s.io/csi-translation-lib"
 )
 
-func Provisioner(cc *ControllerClient) (func(ctx context.Context), error) {
+func Provisioner(cc *ControllerClient) (func(ctx context.Context, stopCh <-chan struct{}), error) {
 
-	args := cc.ControllerArgs
+	if !cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME] {
+		klog.Infof("Driver %s does not support provisioning", cc.DriverName)
+		return nil, nil
+	}
+	klog.Infof("Driver %s supports provisioning", cc.DriverName)
 
 	// snapclientset.NewForConfig creates a new Clientset for VolumesnapshotV1alpha1Client
+	args := cc.ControllerArgs
 	snapClient, err := snapclientset.NewForConfig(cc.RestConfig)
 	if err != nil {
 		klog.Fatalf("Failed to create snapshot client: %v", err)
@@ -97,7 +103,8 @@ func Provisioner(cc *ControllerClient) (func(ctx context.Context), error) {
 		provisionerOptions...,
 	)
 
-	run := func(context.Context) {
+	run := func(ctx context.Context, stopCh <-chan struct{}) {
+		klog.Info("Starting provisioner controller...")
 		provisionController.Run(wait.NeverStop)
 	}
 

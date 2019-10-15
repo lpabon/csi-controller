@@ -34,14 +34,13 @@ import (
 	coreinformers "k8s.io/client-go/informers"
 )
 
-func Snapshotter(cc *ControllerClient) (func(ctx context.Context), error) {
+func Snapshotter(cc *ControllerClient) (func(ctx context.Context, stopCh <-chan struct{}), error) {
 	// Check if the driver supports Snapshots
 	if !cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT] {
 		klog.Infof("Driver %s does not support snapshots", cc.DriverName)
 		return nil, nil
 	}
-
-	klog.Info("Driver %s supports snapshots", cc.DriverName)
+	klog.Infof("Driver %s supports snapshots", cc.DriverName)
 
 	snapClient, err := clientset.NewForConfig(cc.RestConfig)
 	if err != nil {
@@ -77,7 +76,7 @@ func Snapshotter(cc *ControllerClient) (func(ctx context.Context), error) {
 	}
 
 	klog.V(2).Infof(
-		"Start NewCSISnapshotController with snapshotter [%s] connectionTimeout [%+v] "+
+		"Setting up NewCSISnapshotController with snapshotter [%s] connectionTimeout [%+v] "+
 			"csiAddress [%s] createSnapshotContentRetryCount [%d] createSnapshotContentInterval [%+v] "+
 			"resyncPeriod [%+v] snapshotNamePrefix [%s] snapshotNameUUIDLength [%d]",
 		cc.DriverName,
@@ -108,9 +107,9 @@ func Snapshotter(cc *ControllerClient) (func(ctx context.Context), error) {
 		args.SnapshotterNameUUIDLength,
 	)
 
-	run := func(context.Context) {
+	run := func(ctx context.Context, stopCh <-chan struct{}) {
+		klog.Info("Starting snapshotter controller...")
 		// run...
-		stopCh := make(chan struct{})
 		factory.Start(stopCh)
 		coreFactory.Start(stopCh)
 		go ctrl.Run(args.WorkerThreads, stopCh)

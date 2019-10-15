@@ -266,16 +266,16 @@ func main() {
 		factory.Start(stopCh)
 
 		if attacherCtrl != nil {
-			attacherCtrl.Run(int(args.WorkerThreads), stopCh)
+			klog.Info("Starting attacher controller...")
+			attacherCtrl.Run(args.WorkerThreads, stopCh)
 		}
 
-		// Always start the provisioner
 		if provisioner != nil {
-			provisioner(ctx)
+			go provisioner(ctx, stopCh)
 		}
 
 		if snapshotter != nil {
-			snapshotter(ctx)
+			go snapshotter(ctx, stopCh)
 		}
 
 		// ...until SIGINT
