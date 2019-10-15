@@ -20,7 +20,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math/rand"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -224,7 +226,7 @@ func main() {
 
 	// Provisioner ----------------------------------------------------
 	// snapclientset.NewForConfig creates a new Clientset for VolumesnapshotV1alpha1Client
-	snapClient, err := snapclientset.NewForConfig(controllerClient.KubernetesClientSet)
+	snapClient, err := snapclientset.NewForConfig(config)
 	if err != nil {
 		klog.Fatalf("Failed to create snapshot client: %v", err)
 	}
