@@ -232,6 +232,12 @@ func main() {
 		)
 	}
 
+	// Setup Provisioner
+	provisioner, err := Provisioner(&controllerClient)
+	if err != nil {
+		klog.Fatalf("Error starting provisioner: %v", err)
+	}
+
 	// Leader runner ----------------------------------------------------
 	run := func(ctx context.Context) {
 		stopCh := ctx.Done()
@@ -242,7 +248,9 @@ func main() {
 		}
 
 		// Always start the provisioner
-		//provisionerController.Run(wait.NeverStop)
+		if provisioner != nil {
+			provisioner(ctx)
+		}
 	}
 
 	// Name of config map with leader election lock
