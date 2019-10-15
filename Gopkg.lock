@@ -114,7 +114,6 @@
   name = "github.com/kubernetes-csi/csi-lib-utils"
   packages = [
     "connection",
-    "deprecatedflags",
     "leaderelection",
     "protosanitizer",
     "rpc"
@@ -141,15 +140,22 @@
   version = "v1.4.0"
 
 [[projects]]
-  branch = "master"
   name = "github.com/kubernetes-csi/external-snapshotter"
   packages = [
     "pkg/apis/volumesnapshot/v1alpha1",
     "pkg/client/clientset/versioned",
     "pkg/client/clientset/versioned/scheme",
-    "pkg/client/clientset/versioned/typed/volumesnapshot/v1alpha1"
+    "pkg/client/clientset/versioned/typed/volumesnapshot/v1alpha1",
+    "pkg/client/informers/externalversions",
+    "pkg/client/informers/externalversions/internalinterfaces",
+    "pkg/client/informers/externalversions/volumesnapshot",
+    "pkg/client/informers/externalversions/volumesnapshot/v1alpha1",
+    "pkg/client/listers/volumesnapshot/v1alpha1",
+    "pkg/controller",
+    "pkg/snapshotter"
   ]
-  revision = "54a21f108e31331ab64c3c6b9fb199ee3070bc75"
+  revision = "ac33959738598e55a0a0a9d5a2d08d7445f27f36"
+  version = "v1.1.0"
 
 [[projects]]
   name = "github.com/matttproud/golang_protobuf_extensions"
@@ -401,6 +407,18 @@
     "storage/v1beta1"
   ]
   revision = "077ce48e77da8a331703a93d8cc84580480ff196"
+
+[[projects]]
+  name = "k8s.io/apiextensions-apiserver"
+  packages = [
+    "pkg/apis/apiextensions",
+    "pkg/apis/apiextensions/v1beta1",
+    "pkg/client/clientset/clientset",
+    "pkg/client/clientset/clientset/scheme",
+    "pkg/client/clientset/clientset/typed/apiextensions/v1beta1"
+  ]
+  revision = "53c4693659ed354d76121458fb819202dd1635fa"
+  version = "kubernetes-1.14.0"
 
 [[projects]]
   branch = "master"
@@ -656,6 +674,16 @@
   revision = "94e1e7b7574c44c4c0f2007de6fe617e259191f3"
 
 [[projects]]
+  name = "k8s.io/kubernetes"
+  packages = [
+    "pkg/util/goroutinemap",
+    "pkg/util/goroutinemap/exponentialbackoff",
+    "pkg/util/slice"
+  ]
+  revision = "d647ddbd755faf07169599a625faf302ffc34458"
+  version = "v1.16.1"
+
+[[projects]]
   branch = "master"
   name = "k8s.io/utils"
   packages = [
@@ -684,6 +712,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "0e778eca65f74016c4a7a99a956bc806f5a38901fb47a26997fefb2c0b86a7fd"
+  inputs-digest = "8f417b668f82544e78a746fbebed05eb218fece0929c3f24f473717135c60bf2"
   solver-name = "gps-cdcl"
   solver-version = 1

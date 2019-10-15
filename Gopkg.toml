@@ -46,9 +46,17 @@
   version = "v4.0.1"
 
 # TODO: remove when released
-[[constraint]]
+[[override]]
   name = "github.com/kubernetes-csi/external-snapshotter"
-  branch = "master"
+  branch = "release-1.1"
+
+[[constraint]]
+  name = "k8s.io/code-generator"
+  version = "kubernetes-1.14.0"
+
+[[constraint]]
+  name = "k8s.io/apiextensions-apiserver"
+  version = "kubernetes-1.14.0"
 
 # TODO: all the k8s.io dependencies are overrides due to
 # csi-lib-utils constraints. Once 1.16.0 is released, update
