@@ -73,9 +73,17 @@ type ProvisionerOpts struct {
 	ProvisionerStrictTopology       bool
 }
 
+type SnapshotterOpts struct {
+	SnapshotterSnapshotContentRetryCount int
+	SnapshotterSnapshotContentInterval   time.Duration
+	SnapshotterNamePrefix                string
+	SnapshotterNameUUIDLength            int
+}
+
 type CliOpts struct {
 	CommonOpts
 	ProvisionerOpts
+	SnapshotterOpts
 }
 
 type ControllerClient struct {
@@ -113,7 +121,7 @@ func init() {
 	flag.StringVar(&c.LeaderElectionType, "leader-election-type", "endpoints", "The type of leader election, options are 'endpoints' (default) or 'leases' (strongly recommended). The 'endpoints' option is deprecated in favor of 'leases'.")
 	flag.StringVar(&c.CsiAddress, "leader-election-namespace", "", "Namespace where the leader election resource lives. Defaults to the pod namespace if not set.")
 	flag.IntVar(&c.WorkerThreads, "worker-threads", 10, "Number of attacher worker threads")
-	flag.DurationVar(&c.Timeout, "timeout", 15*time.Second, "Timeout for waiting for driver to be ready")
+	flag.DurationVar(&c.Timeout, "timeout", time.Minute, "Timeout for waiting for driver to be ready")
 	flag.DurationVar(&c.RetryIntervalStart, "retry-interval-start", time.Second, "Initial retry interval of failed create volume or deletion. It doubles with each failure, up to retry-interval-max.")
 	flag.DurationVar(&c.RetryIntervalMax, "retry-interval-max", 5*time.Minute, "Maximum retry interval of failed create volume or deletion.")
 
@@ -121,6 +129,13 @@ func init() {
 	flag.StringVar(&c.ProvisionerVolumeNamePrefix, "provisioner-volume-name-prefix", "pvc", "Prefix to apply to the name of a created volume.")
 	flag.IntVar(&c.ProvisionerVolumeNameUUIDLength, "provisioner-volume-name-uuid-length", -1, "Truncates generated UUID of a created volume to this length. Defaults behavior is to NOT truncate.")
 	flag.BoolVar(&c.ProvisionerStrictTopology, "strict-topology", false, "Passes only selected node topology to CreateVolume Request, unlike default behavior of passing aggregated cluster topologies that match with topology keys of the selected node.")
+
+	// Snapshotter
+	flag.IntVar(&c.SnapshotterSnapshotContentRetryCount, "create-snapshotcontent-retrycount", 5, "Number of retries when we create a snapshot content object for a snapshot.")
+	flag.DurationVar(&c.SnapshotterSnapshotContentInterval, "create-snapshotcontent-interval", 10*time.Second, "Interval between retries when we create a snapshot content object for a snapshot.")
+	flag.StringVar(&c.SnapshotterNamePrefix, "snapshot-name-prefix", "snapshot", "Prefix to apply to the name of a created snapshot")
+	flag.IntVar(&c.SnapshotterNameUUIDLength, "snapshot-name-uuid-length", -1, "Length in characters for the generated uuid of a created snapshot. Defaults behavior is to NOT truncate.")
+
 }
 
 func main() {
@@ -238,6 +253,12 @@ func main() {
 		klog.Fatalf("Error starting provisioner: %v", err)
 	}
 
+	// Setup Snapshotter
+	snapshotter, err := Snapshotter(&controllerClient)
+	if err != nil {
+		klog.Fatalf("Error starting snapshotter: %v", err)
+	}
+
 	// Leader runner ----------------------------------------------------
 	run := func(ctx context.Context) {
 		stopCh := ctx.Done()
@@ -251,6 +272,16 @@ func main() {
 		if provisioner != nil {
 			provisioner(ctx)
 		}
+
+		if snapshotter != nil {
+			snapshotter(ctx)
+		}
+
+		// ...until SIGINT
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt)
+		<-c
+		close(stopCh)
 	}
 
 	// Name of config map with leader election lock
