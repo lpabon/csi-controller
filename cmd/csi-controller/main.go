@@ -260,6 +260,12 @@ func main() {
 		klog.Fatalf("Error starting snapshotter: %v", err)
 	}
 
+	// Setup Resizer
+	resizer, err := Resizer(&controllerClient)
+	if err != nil {
+		klog.Fatalf("Error starting resizer: %v", err)
+	}
+
 	// Leader runner ----------------------------------------------------
 	run := func(ctx context.Context) {
 		stopCh := ctx.Done()
@@ -276,6 +282,10 @@ func main() {
 
 		if snapshotter != nil {
 			go snapshotter(ctx, stopCh)
+		}
+
+		if resizer != nil {
+			go resizer(ctx, stopCh)
 		}
 
 		// ...until SIGINT

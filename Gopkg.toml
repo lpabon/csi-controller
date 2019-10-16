@@ -28,6 +28,14 @@
   name = "github.com/kubernetes-csi/external-attacher"
   version = "2.0.0"
 
+[[constraint]]
+  name = "github.com/kubernetes-csi/external-resizer"
+  branch = "master"
+
+[[override]]
+  name = "github.com/kubernetes-csi/external-snapshotter"
+  branch = "release-1.1"
+
 # This selects the latest 1.x.y version.
 [[constraint]]
   name = "github.com/container-storage-interface/spec"
@@ -45,10 +53,6 @@
   name = "sigs.k8s.io/sig-storage-lib-external-provisioner"
   version = "v4.0.1"
 
-# TODO: remove when released
-[[override]]
-  name = "github.com/kubernetes-csi/external-snapshotter"
-  branch = "release-1.1"
 
 [[constraint]]
   name = "k8s.io/code-generator"

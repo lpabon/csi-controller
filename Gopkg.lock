@@ -140,6 +140,17 @@
   version = "v1.4.0"
 
 [[projects]]
+  branch = "master"
+  name = "github.com/kubernetes-csi/external-resizer"
+  packages = [
+    "pkg/controller",
+    "pkg/csi",
+    "pkg/resizer",
+    "pkg/util"
+  ]
+  revision = "93cdb2e0c0b1873da63c4f6efe43324d0562f44d"
+
+[[projects]]
   name = "github.com/kubernetes-csi/external-snapshotter"
   packages = [
     "pkg/apis/volumesnapshot/v1alpha1",
@@ -712,6 +723,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "8f417b668f82544e78a746fbebed05eb218fece0929c3f24f473717135c60bf2"
+  inputs-digest = "f26781c015204f78a781a98a2d42d695219cccf1129ddefe59152bd7467aab5c"
   solver-name = "gps-cdcl"
   solver-version = 1
