@@ -26,11 +26,9 @@ import (
 	"time"
 
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/workqueue"
 	utilflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog"
 
@@ -39,9 +37,6 @@ import (
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
 	"github.com/kubernetes-csi/csi-lib-utils/rpc"
 	ctrl "github.com/kubernetes-csi/external-provisioner/pkg/controller"
-
-	"github.com/kubernetes-csi/external-attacher/pkg/attacher"
-	attacherctl "github.com/kubernetes-csi/external-attacher/pkg/controller"
 
 	"google.golang.org/grpc"
 )
@@ -56,7 +51,7 @@ const (
 )
 
 type CommonOpts struct {
-	MasterUrl               string
+	MasterURL               string
 	Kubeconfig              string
 	Resync                  time.Duration
 	CsiAddress              string
@@ -98,9 +93,16 @@ type ControllerClient struct {
 	CsiConn               *grpc.ClientConn
 }
 
-type leaderElection interface {
-	Run() error
-	WithNamespace(namespace string)
+// RunnerHandler is a function that runs the controller in a leader election loop
+type RunnerHandler func(ctx context.Context, stopCh <-chan struct{})
+
+// LeaderElectionRunner defines an interface for the leader election execution function
+type LeaderElectionRunner interface {
+
+	// Runner returns a RunnerHandler to be executed by the lead election function.
+	// If RunnerHandler is nil, then the controller has detected that it does not support
+	// the function.
+	Runner() (RunnerHandler, error)
 }
 
 // Command line flags
@@ -116,7 +118,7 @@ func init() {
 
 	// Common
 	flag.StringVar(&c.Kubeconfig, "kubeconfig", "", "Absolute path to the kubeconfig file. Required only when running out of cluster.")
-	flag.StringVar(&c.MasterUrl, "master", "", "Master URL to build a client config from. Either this or kubeconfig needs to be set if the provisioner is being run out of cluster.")
+	flag.StringVar(&c.MasterURL, "master", "", "Master URL to build a client config from. Either this or kubeconfig needs to be set if the provisioner is being run out of cluster.")
 	flag.StringVar(&c.CsiAddress, "csi-address", "/run/csi/socket", "Address of the CSI driver socket.")
 	flag.DurationVar(&c.Resync, "resync", 10*time.Minute, "Resync interval of the controller.")
 	flag.StringVar(&c.LeaderElectionType, "leader-election-type", "endpoints", "The type of leader election, options are 'endpoints' (default) or 'leases' (strongly recommended). The 'endpoints' option is deprecated in favor of 'leases'.")
@@ -136,7 +138,6 @@ func init() {
 	flag.DurationVar(&c.SnapshotterSnapshotContentInterval, "create-snapshotcontent-interval", 10*time.Second, "Interval between retries when we create a snapshot content object for a snapshot.")
 	flag.StringVar(&c.SnapshotterNamePrefix, "snapshot-name-prefix", "snapshot", "Prefix to apply to the name of a created snapshot")
 	flag.IntVar(&c.SnapshotterNameUUIDLength, "snapshot-name-uuid-length", -1, "Length in characters for the generated uuid of a created snapshot. Defaults behavior is to NOT truncate.")
-
 }
 
 func main() {
@@ -162,7 +163,7 @@ func main() {
 	// Create the client config. Use kubeconfig if given, otherwise assume in-cluster.
 	args := &controllerClient.ControllerArgs
 	var err error
-	controllerClient.RestConfig, err = buildConfig(args.MasterUrl, args.Kubeconfig)
+	controllerClient.RestConfig, err = buildConfig(args.MasterURL, args.Kubeconfig)
 	if err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
@@ -178,8 +179,6 @@ func main() {
 		klog.Error(err.Error())
 		os.Exit(1)
 	}
-
-	factory := informers.NewSharedInformerFactory(controllerClient.KubernetesClientSet, args.Resync)
 
 	// Connect to CSI.
 	controllerClient.CsiConn, err = ctrl.Connect(args.CsiAddress)
@@ -202,90 +201,66 @@ func main() {
 	}
 	klog.V(2).Infof("Detected CSI driver %s", controllerClient.DriverName)
 
-	// ControllerService ----------------------------------------------------------
+	// Create a context
 	ctx, cancel := context.WithTimeout(context.Background(), csiTimeout)
 	defer cancel()
+
+	// Determine if the driver supports the controller service
 	supportsService, err := supportsPluginControllerService(ctx, controllerClient.CsiConn)
 	if err != nil {
-		klog.Error(err.Error())
+		klog.Fatalf("Unable to determine if the CSI driver supports the controller services: %v", err)
 	}
-
 	if !supportsService {
-		klog.Error("CSI driver does not support Plugin Controller Service")
-		os.Exit(1)
+		klog.Fatal("CSI driver does not support Plugin Controller Service")
 	}
 
+	// Get the capabilities of the driver
 	controllerClient.PluginCapabilites,
 		controllerClient.ControllerCapabilites,
 		err = ctrl.GetDriverCapabilities(controllerClient.CsiConn, args.Timeout)
 	if err != nil {
 		klog.Fatalf("Error getting CSI driver capabilities: %s", err)
 	}
-	supportsAttach := controllerClient.ControllerCapabilites[csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME]
-	supportsReadOnly := controllerClient.ControllerCapabilites[csi.ControllerServiceCapability_RPC_PUBLISH_READONLY]
 
-	// Attacher ----------------------------------------------------------
-	var attacherCtrl *attacherctl.CSIAttachController
+	// Create a list of controller runners
+	runners := make([]RunnerHandler, 0)
 
-	// Find out if the driver supports attach/detach.
-	if supportsAttach {
-		klog.V(2).Infof("CSI driver supports ControllerPublishUnpublish, using real CSI handler")
-		pvLister := factory.Core().V1().PersistentVolumes().Lister()
-		nodeLister := factory.Core().V1().Nodes().Lister()
-		vaLister := factory.Storage().V1beta1().VolumeAttachments().Lister()
-		csiNodeLister := factory.Storage().V1beta1().CSINodes().Lister()
-		attacher := attacher.NewAttacher(controllerClient.CsiConn)
-		handler := attacherctl.NewCSIHandler(controllerClient.KubernetesClientSet, controllerClient.DriverName, attacher, pvLister, nodeLister, csiNodeLister, vaLister, &args.Timeout, supportsReadOnly)
-
-		attacherCtrl = attacherctl.NewCSIAttachController(
-			controllerClient.KubernetesClientSet,
-			controllerClient.DriverName,
-			handler,
-			factory.Storage().V1beta1().VolumeAttachments(),
-			factory.Core().V1().PersistentVolumes(),
-			workqueue.NewItemExponentialFailureRateLimiter(args.RetryIntervalStart, args.RetryIntervalMax),
-			workqueue.NewItemExponentialFailureRateLimiter(args.RetryIntervalStart, args.RetryIntervalMax),
-		)
+	// Setup Attacher
+	attacher, err := Attacher(&controllerClient)
+	if err != nil {
+		klog.Fatalf("Error starting attacher: %v", err)
 	}
+	runners = append(runners, attacher)
 
 	// Setup Provisioner
 	provisioner, err := Provisioner(&controllerClient)
 	if err != nil {
 		klog.Fatalf("Error starting provisioner: %v", err)
 	}
+	runners = append(runners, provisioner)
 
 	// Setup Snapshotter
 	snapshotter, err := Snapshotter(&controllerClient)
 	if err != nil {
 		klog.Fatalf("Error starting snapshotter: %v", err)
 	}
+	runners = append(runners, snapshotter)
 
 	// Setup Resizer
 	resizer, err := Resizer(&controllerClient)
 	if err != nil {
 		klog.Fatalf("Error starting resizer: %v", err)
 	}
+	runners = append(runners, resizer)
 
 	// Leader runner ----------------------------------------------------
 	run := func(ctx context.Context) {
 		stopCh := ctx.Done()
-		factory.Start(stopCh)
 
-		if attacherCtrl != nil {
-			klog.Info("Starting attacher controller...")
-			attacherCtrl.Run(args.WorkerThreads, stopCh)
-		}
-
-		if provisioner != nil {
-			go provisioner(ctx, stopCh)
-		}
-
-		if snapshotter != nil {
-			go snapshotter(ctx, stopCh)
-		}
-
-		if resizer != nil {
-			go resizer(ctx, stopCh)
+		for _, runner := range runners {
+			if runner != nil {
+				go runner(ctx, stopCh)
+			}
 		}
 
 		// ...until SIGINT
