@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -34,7 +34,8 @@ import (
 	coreinformers "k8s.io/client-go/informers"
 )
 
-func Snapshotter(cc *ControllerClient) (func(ctx context.Context, stopCh <-chan struct{}), error) {
+// Snapshotter returns a snapshotter controller for the leader election runner
+func Snapshotter(cc *ControllerClient) (RunnerHandler, error) {
 	// Check if the driver supports Snapshots
 	if !cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT] {
 		klog.Infof("Driver %s does not support snapshots", cc.DriverName)
@@ -112,7 +113,7 @@ func Snapshotter(cc *ControllerClient) (func(ctx context.Context, stopCh <-chan 
 		// run...
 		factory.Start(stopCh)
 		coreFactory.Start(stopCh)
-		go ctrl.Run(args.WorkerThreads, stopCh)
+		ctrl.Run(args.WorkerThreads, stopCh)
 	}
 
 	return run, nil

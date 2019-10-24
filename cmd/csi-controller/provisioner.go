@@ -1,5 +1,5 @@
 /*
-Copyright 2017 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -34,7 +34,8 @@ import (
 	csitranslationlib "k8s.io/csi-translation-lib"
 )
 
-func Provisioner(cc *ControllerClient) (func(ctx context.Context, stopCh <-chan struct{}), error) {
+// Provisioner returns a provisioner controller for the leader election runner
+func Provisioner(cc *ControllerClient) (RunnerHandler, error) {
 
 	if !cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME] {
 		klog.Infof("Driver %s does not support provisioning", cc.DriverName)

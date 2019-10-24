@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -28,7 +28,8 @@ import (
 	"k8s.io/klog"
 )
 
-func Resizer(cc *ControllerClient) (func(ctx context.Context, stopCh <-chan struct{}), error) {
+// Resizer returns a resizer controller for the leader election runner
+func Resizer(cc *ControllerClient) (RunnerHandler, error) {
 
 	if !cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_EXPAND_VOLUME] {
 		klog.Infof("Driver %s does not support resize", cc.DriverName)
@@ -40,11 +41,13 @@ func Resizer(cc *ControllerClient) (func(ctx context.Context, stopCh <-chan stru
 	informerFactory := informers.NewSharedInformerFactory(cc.KubernetesClientSet, args.Resync)
 	csiResizer, err := resizer.NewResizer(args.CsiAddress, args.Timeout, cc.KubernetesClientSet, informerFactory)
 	if err != nil {
-		klog.Fatal("Failed to start resizer: %v", err)
+		klog.Fatalf("Failed to start resizer: %v", err)
 	}
 
 	resizerName := cc.DriverName
 	rc := controller.NewResizeController(resizerName, csiResizer, cc.KubernetesClientSet, args.Resync, informerFactory)
+
+	// Setup runner
 	run := func(ctx context.Context, stopCh <-chan struct{}) {
 		klog.Info("Starting resizer controller...")
 		informerFactory.Start(wait.NeverStop)
