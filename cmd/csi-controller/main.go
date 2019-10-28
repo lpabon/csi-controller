@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -31,6 +32,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	utilflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog"
+
+	ver "github.com/hashicorp/go-version"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/kubernetes-csi/csi-lib-utils/connection"
@@ -84,6 +87,7 @@ type CliOpts struct {
 
 type ControllerClient struct {
 	ControllerArgs        CliOpts
+	KubeVersion           string
 	FeatureGates          map[string]bool
 	RestConfig            *rest.Config
 	DriverName            string
@@ -103,6 +107,11 @@ type LeaderElectionRunner interface {
 	// If RunnerHandler is nil, then the controller has detected that it does not support
 	// the function.
 	Runner() (RunnerHandler, error)
+}
+
+type leaderElection interface {
+	Run() error
+	WithNamespace(namespace string)
 }
 
 // Command line flags
@@ -178,6 +187,55 @@ func main() {
 	if err != nil {
 		klog.Error(err.Error())
 		os.Exit(1)
+	}
+
+	/*
+		{"major":"1","minor":"15","gitVersion":"v1.15.5","gitCommit":"20c265fef0741dd71a66480e35bd69f18351daea","gitTreeState":"clean","buildDate":"2019-10-15T19:07:57Z","goVersion":"go1.12.10","compiler":"gc","platform":"linux/amd64"}
+	*/
+
+	info, err := controllerClient.KubernetesClientSet.Discovery().ServerVersion()
+	if err != nil {
+		klog.Fatal(err.Error())
+	}
+	controllerClient.KubeVersion = info.GitVersion
+	b, err := json.Marshal(info)
+	fmt.Printf(string(b))
+
+	// Determine which version of the endpoints to use
+	kVer, err := ver.NewVersion(info.GitVersion)
+	if err != nil {
+		klog.Fatalf("Failed to determine kubernetes version from %s: %v", info.GitVersion, err)
+	}
+
+	// Check if the Kubernetes Version is less than 1.13.0
+	csi10Constraint, err := ver.NewConstraint(">= 1.13.0")
+	if err != nil {
+		klog.Fatalf(err.Error())
+	}
+	if !csi10Constraint.Check(kVer) {
+		klog.Fatalf("Requires Kubernetes 1.13.0 or greater")
+	}
+
+	// Check if the Kubernetes is 1.13.x but not 1.13.12. There is a fix that is needed for CSI
+	csiFix83338Constraint, err := ver.NewConstraint(">= 1.13.0, < 1.13.12")
+	if err != nil {
+		klog.Fatalf(err.Error())
+	}
+	if csiFix83338Constraint.Check(kVer) {
+		klog.Warningf("Detected Kubernetes %s. Please upgrade to Kubernetes 1.13.12 to get https://github.com/kubernetes/kubernetes/pull/83338", info.GitVersion)
+	}
+
+	leasesVersionConstrating := ">= 1.13.0, < 1.14.0"
+	isKube113x, err := ver.NewConstraint(leasesVersionConstrating)
+	if err != nil {
+		klog.Fatalf(err.Error())
+	}
+
+	// Determine if the CSI Node CRD exists according to
+	// https://kubernetes-csi.github.io/docs/csi-node-object.html#enabling-csinodeinfo-on-kubernetes
+	if isKube113x.Check(kVer) {
+		// TODO: Add check for the CSINode CRD
+		klog.Warning("Skipping CSI NODE CRD check")
 	}
 
 	// Connect to CSI.
@@ -269,14 +327,25 @@ func main() {
 		<-c
 	}
 
-	// Name of config map with leader election lock
+	// Leader election name
 	lockName := "csi-controller-leader-" + controllerClient.DriverName
-	le := leaderelection.NewLeaderElection(controllerClient.KubernetesClientSet, lockName, run)
 
+	// Set leader election type according to Kubernetes version constraint
+	var le leaderElection
+	if isKube113x.Check(kVer) {
+		klog.V(3).Infof("Using endpoints for leader election in Kubernetes version constraint %s", leasesVersionConstrating)
+		le = leaderelection.NewLeaderElectionWithEndpoints(controllerClient.KubernetesClientSet, lockName, run)
+	} else {
+		klog.V(5).Info("Using leases for leader election")
+		le = leaderelection.NewLeaderElection(controllerClient.KubernetesClientSet, lockName, run)
+	}
+
+	// Set the namespace for the leader election
 	if args.LeaderElectionNamespace != "" {
 		le.WithNamespace(args.LeaderElectionNamespace)
 	}
 
+	// Start leader election
 	if err := le.Run(); err != nil {
 		klog.Fatalf("failed to initialize leader election: %v", err)
 	}
