@@ -28,6 +28,7 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
 	"github.com/kubernetes-csi/external-attacher/pkg/attacher"
+	"github.com/kubernetes-csi/external-attacher/pkg/controller"
 	attacherctl "github.com/kubernetes-csi/external-attacher/pkg/controller"
 )
 
@@ -61,25 +62,32 @@ func Attacher(cc *ControllerClient) (RunnerHandler, error) {
 	// Attacher ----------------------------------------------------------
 	var attacherCtrl *attacherctl.CSIAttachController
 	args := cc.ControllerArgs
-	factory := informers.NewSharedInformerFactory(controllerClient.KubernetesClientSet, args.Resync)
+	factory := informers.NewSharedInformerFactory(cc.KubernetesClientSet, args.Resync)
 
 	// Find out if the driver supports attach/detach.
 	supportsReadOnly := cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_PUBLISH_READONLY]
-	pvLister := factory.Core().V1().PersistentVolumes().Lister()
-	nodeLister := factory.Core().V1().Nodes().Lister()
-	vaLister := factory.Storage().V1beta1().VolumeAttachments().Lister()
-	csiNodeLister := factory.Storage().V1beta1().CSINodes().Lister()
-	attacher := attacher.NewAttacher(cc.CsiConn)
-	handler := attacherctl.NewCSIHandler(
-		cc.KubernetesClientSet,
-		cc.DriverName,
-		attacher,
-		pvLister,
-		nodeLister,
-		csiNodeLister,
-		vaLister,
-		&args.Timeout,
-		supportsReadOnly)
+	supportsAttach := cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME]
+	var handler controller.Handler
+
+	if !supportsAttach {
+		handler = controller.NewTrivialHandler(cc.KubernetesClientSet)
+	} else {
+		pvLister := factory.Core().V1().PersistentVolumes().Lister()
+		nodeLister := factory.Core().V1().Nodes().Lister()
+		vaLister := factory.Storage().V1beta1().VolumeAttachments().Lister()
+		csiNodeLister := factory.Storage().V1beta1().CSINodes().Lister()
+		attacher := attacher.NewAttacher(cc.CsiConn)
+		handler = attacherctl.NewCSIHandler(
+			cc.KubernetesClientSet,
+			cc.DriverName,
+			attacher,
+			pvLister,
+			nodeLister,
+			csiNodeLister,
+			vaLister,
+			&args.Timeout,
+			supportsReadOnly)
+	}
 
 	attacherCtrl = attacherctl.NewCSIAttachController(
 		cc.KubernetesClientSet,
