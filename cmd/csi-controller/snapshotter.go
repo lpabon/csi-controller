@@ -38,10 +38,10 @@ import (
 func Snapshotter(cc *ControllerClient) (RunnerHandler, error) {
 	// Check if the driver supports Snapshots
 	if !cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT] {
-		klog.Infof("Driver %s does not support snapshots", cc.DriverName)
+		klog.V(2).Infof("Driver %s does not support snapshots", cc.DriverName)
 		return nil, nil
 	}
-	klog.Infof("Driver %s supports snapshots", cc.DriverName)
+	klog.V(2).Infof("Driver %s supports snapshots", cc.DriverName)
 
 	snapClient, err := clientset.NewForConfig(cc.RestConfig)
 	if err != nil {
@@ -76,7 +76,7 @@ func Snapshotter(cc *ControllerClient) (RunnerHandler, error) {
 		os.Exit(1)
 	}
 
-	klog.V(2).Infof(
+	klog.V(5).Infof(
 		"Setting up NewCSISnapshotController with snapshotter [%s] connectionTimeout [%+v] "+
 			"csiAddress [%s] createSnapshotContentRetryCount [%d] createSnapshotContentInterval [%+v] "+
 			"resyncPeriod [%+v] snapshotNamePrefix [%s] snapshotNameUUIDLength [%d]",
@@ -109,7 +109,7 @@ func Snapshotter(cc *ControllerClient) (RunnerHandler, error) {
 	)
 
 	run := func(ctx context.Context, stopCh <-chan struct{}) {
-		klog.Info("Starting snapshotter controller...")
+		klog.V(2).Info("Starting snapshotter controller...")
 		// run...
 		factory.Start(stopCh)
 		coreFactory.Start(stopCh)

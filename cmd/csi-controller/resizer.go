@@ -32,10 +32,10 @@ import (
 func Resizer(cc *ControllerClient) (RunnerHandler, error) {
 
 	if !cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_EXPAND_VOLUME] {
-		klog.Infof("Driver %s does not support resize", cc.DriverName)
+		klog.V(2).Infof("Driver %s does not support resize", cc.DriverName)
 		return nil, nil
 	}
-	klog.Infof("Driver %s supports resize", cc.DriverName)
+	klog.V(2).Infof("Driver %s supports resize", cc.DriverName)
 
 	args := cc.ControllerArgs
 	informerFactory := informers.NewSharedInformerFactory(cc.KubernetesClientSet, args.Resync)
@@ -49,7 +49,7 @@ func Resizer(cc *ControllerClient) (RunnerHandler, error) {
 
 	// Setup runner
 	run := func(ctx context.Context, stopCh <-chan struct{}) {
-		klog.Info("Starting resizer controller...")
+		klog.V(2).Info("Starting resizer controller...")
 		informerFactory.Start(wait.NeverStop)
 		rc.Run(args.WorkerThreads, ctx)
 	}

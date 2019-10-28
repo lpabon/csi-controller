@@ -180,14 +180,10 @@ func main() {
 
 	controllerClient.KubernetesClientSet, err = kubernetes.NewForConfig(controllerClient.RestConfig)
 	if err != nil {
-		klog.Error(err.Error())
-		os.Exit(1)
+		klog.Fatalf(err.Error())
 	}
 
-	/*
-		{"major":"1","minor":"15","gitVersion":"v1.15.5","gitCommit":"20c265fef0741dd71a66480e35bd69f18351daea","gitTreeState":"clean","buildDate":"2019-10-15T19:07:57Z","goVersion":"go1.12.10","compiler":"gc","platform":"linux/amd64"}
-	*/
-
+	// Get Kubernetes Version
 	info, err := controllerClient.KubernetesClientSet.Discovery().ServerVersion()
 	if err != nil {
 		klog.Fatal(err.Error())
@@ -229,6 +225,7 @@ func main() {
 	// https://kubernetes-csi.github.io/docs/csi-node-object.html#enabling-csinodeinfo-on-kubernetes
 	if isKube113x.Check(kVer) {
 		// TODO: Add check for the CSINode CRD
+		// We could add it here if it does not exist.
 		klog.Warning("Skipping CSI NODE CRD check")
 	}
 

@@ -50,12 +50,12 @@ func Attacher(cc *ControllerClient) (RunnerHandler, error) {
 	// Instead, we'll just include the attacher if k8s < 1.14.
 	if attacherDetectionConstraint.Check(kVer) {
 		if !cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME] {
-			klog.Infof("Driver %s does not support controller attacher", cc.DriverName)
+			klog.V(2).Infof("Driver %s does not support controller attacher", cc.DriverName)
 			return nil, nil
 		}
-		klog.Infof("Driver %s supports controller attacher", cc.DriverName)
+		klog.V(2).Infof("Driver %s supports controller attacher", cc.DriverName)
 	} else {
-		klog.V(3).Info("Kubernetes 1.13.x detected which requires the attacher process even if the CSI driver does not support it")
+		klog.V(2).Info("Kubernetes 1.13.x detected which requires the attacher process even if the CSI driver does not support it")
 	}
 
 	// Attacher ----------------------------------------------------------
@@ -94,7 +94,7 @@ func Attacher(cc *ControllerClient) (RunnerHandler, error) {
 	run := func(ctx context.Context, stopCh <-chan struct{}) {
 		factory.Start(stopCh)
 
-		klog.Info("Starting attacher controller...")
+		klog.V(2).Info("Starting attacher controller...")
 		attacherCtrl.Run(args.WorkerThreads, stopCh)
 	}
 

@@ -1,0 +1,36 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: csi-controller
+  namespace: kube-system
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: csi-driver
+  template:
+    metadata:
+      labels:
+        app: csi-driver
+    spec:
+      serviceAccount: csi-driver-account
+      containers:
+        - name: csi-controller
+          imagePullPolicy: Always
+          image: quay.io/lpabon/csi-controller:5
+          args:
+            - "--v=3"
+            - "--csi-address=$(ADDRESS)"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+      volumes:
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/WRITE.YOUR.DRIVER.HERE
+            type: DirectoryOrCreate

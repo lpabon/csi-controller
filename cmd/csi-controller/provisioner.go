@@ -38,10 +38,10 @@ import (
 func Provisioner(cc *ControllerClient) (RunnerHandler, error) {
 
 	if !cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME] {
-		klog.Infof("Driver %s does not support provisioning", cc.DriverName)
+		klog.V(2).Infof("Driver %s does not support provisioning", cc.DriverName)
 		return nil, nil
 	}
-	klog.Infof("Driver %s supports provisioning", cc.DriverName)
+	klog.V(2).Infof("Driver %s supports provisioning", cc.DriverName)
 
 	// snapclientset.NewForConfig creates a new Clientset for VolumesnapshotV1alpha1Client
 	args := cc.ControllerArgs
@@ -105,7 +105,7 @@ func Provisioner(cc *ControllerClient) (RunnerHandler, error) {
 	)
 
 	run := func(ctx context.Context, stopCh <-chan struct{}) {
-		klog.Info("Starting provisioner controller...")
+		klog.V(2).Info("Starting provisioner controller...")
 		provisionController.Run(wait.NeverStop)
 	}
 

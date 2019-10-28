@@ -1,9 +1,23 @@
 # CSI Controller
-This controller will interrogate the Kubernetes version and the CSI driver to
+Goal of this project is to create a simple, single, intelligent CSI controller
+which can interrogate the Kubernetes version and the CSI driver to
 determine which controller to load automatically. It will also setup the
 appropriate objects and settings depending on the Kubernetes version.
 
-**WIP**
+This version of the CSI controller uses the following versions of the side cars:
+
+* external-provisioner v1.4.0
+* external-attacher v2.0.0
+* external-resizer master branch
+* external-snapshotter release-1.1 branch
+
+RBAC and deployment are available in [deploy](https://github.com/lpabon/csi-controller/tree/master/deploy/kubernetes) directory
+
+### Example output of the logs:
+
+```
+
+```
 
 ## Community, discussion, contribution, and support
 
