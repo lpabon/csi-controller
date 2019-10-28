@@ -23,6 +23,8 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
 
+	ver "github.com/hashicorp/go-version"
+
 	"github.com/container-storage-interface/spec/lib/go/csi"
 
 	"github.com/kubernetes-csi/external-attacher/pkg/attacher"
@@ -31,11 +33,30 @@ import (
 
 // Attacher returns an attacher controller for the leader election runner
 func Attacher(cc *ControllerClient) (RunnerHandler, error) {
-	if !cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME] {
-		klog.Infof("Driver %s does not support controller attacher", cc.DriverName)
-		return nil, nil
+
+	// Create a Kubernetes version constraint
+	kVer, err := ver.NewVersion(cc.KubeVersion)
+	if err != nil {
+		klog.Fatalf("Failed to determine kubernetes version from %s: %v", cc.KubeVersion, err)
 	}
-	klog.Infof("Driver %s supports controller attacher", cc.DriverName)
+	attacherDetectionConstraint, err := ver.NewConstraint(">= 1.14.0")
+	if err != nil {
+		klog.Fatalf(err.Error())
+	}
+
+	// If we have k8s version < v1.14, we include the attacher.
+	// This is because the CSIDriver object was alpha until 1.14+
+	// To enable the CSIDriver object support, a feature flag would be needed.
+	// Instead, we'll just include the attacher if k8s < 1.14.
+	if attacherDetectionConstraint.Check(kVer) {
+		if !cc.ControllerCapabilites[csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME] {
+			klog.Infof("Driver %s does not support controller attacher", cc.DriverName)
+			return nil, nil
+		}
+		klog.Infof("Driver %s supports controller attacher", cc.DriverName)
+	} else {
+		klog.V(3).Info("Kubernetes 1.13.x detected which requires the attacher process even if the CSI driver does not support it")
+	}
 
 	// Attacher ----------------------------------------------------------
 	var attacherCtrl *attacherctl.CSIAttachController

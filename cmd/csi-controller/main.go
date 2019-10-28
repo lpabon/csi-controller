@@ -225,8 +225,7 @@ func main() {
 		klog.Warningf("Detected Kubernetes %s. Please upgrade to Kubernetes 1.13.12 to get https://github.com/kubernetes/kubernetes/pull/83338", info.GitVersion)
 	}
 
-	leasesVersionConstrating := ">= 1.13.0, < 1.14.0"
-	isKube113x, err := ver.NewConstraint(leasesVersionConstrating)
+	isKube113x, err := ver.NewConstraint(">= 1.13.0, < 1.14.0")
 	if err != nil {
 		klog.Fatalf(err.Error())
 	}
@@ -333,7 +332,7 @@ func main() {
 	// Set leader election type according to Kubernetes version constraint
 	var le leaderElection
 	if isKube113x.Check(kVer) {
-		klog.V(3).Infof("Using endpoints for leader election in Kubernetes version constraint %s", leasesVersionConstrating)
+		klog.V(3).Infof("Using endpoints for leader election in Kubernetes version 1.13.x")
 		le = leaderelection.NewLeaderElectionWithEndpoints(controllerClient.KubernetesClientSet, lockName, run)
 	} else {
 		klog.V(5).Info("Using leases for leader election")
