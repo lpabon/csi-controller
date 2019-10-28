@@ -4,7 +4,8 @@ which can interrogate the Kubernetes version and the CSI driver to
 determine which controller to load automatically. It will also setup the
 appropriate objects and settings depending on the Kubernetes version.
 
-This version of the CSI controller uses the following versions of the side cars:
+Use the container image `quay.io/lpabon/csi-controller:v0.1`. This version of
+the CSI controller uses the following versions of the side cars:
 
 * external-provisioner v1.4.0
 * external-attacher v2.0.0
