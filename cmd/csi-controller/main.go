@@ -48,9 +48,6 @@ const (
 
 	// Default timeout of short CSI calls like GetPluginInfo
 	csiTimeout = time.Second
-
-	leaderElectionTypeLeases     = "leases"
-	leaderElectionTypeConfigMaps = "configmaps"
 )
 
 type CommonOpts struct {
@@ -58,7 +55,6 @@ type CommonOpts struct {
 	Kubeconfig              string
 	Resync                  time.Duration
 	CsiAddress              string
-	LeaderElectionType      string
 	LeaderElectionNamespace string
 	WorkerThreads           int
 	Timeout                 time.Duration
@@ -130,7 +126,6 @@ func init() {
 	flag.StringVar(&c.MasterURL, "master", "", "Master URL to build a client config from. Either this or kubeconfig needs to be set if the provisioner is being run out of cluster.")
 	flag.StringVar(&c.CsiAddress, "csi-address", "/run/csi/socket", "Address of the CSI driver socket.")
 	flag.DurationVar(&c.Resync, "resync", 10*time.Minute, "Resync interval of the controller.")
-	flag.StringVar(&c.LeaderElectionType, "leader-election-type", "endpoints", "The type of leader election, options are 'endpoints' (default) or 'leases' (strongly recommended). The 'endpoints' option is deprecated in favor of 'leases'.")
 	flag.StringVar(&c.CsiAddress, "leader-election-namespace", "", "Namespace where the leader election resource lives. Defaults to the pod namespace if not set.")
 	flag.IntVar(&c.WorkerThreads, "worker-threads", 10, "Number of attacher worker threads")
 	flag.DurationVar(&c.Timeout, "timeout", time.Minute, "Timeout for waiting for driver to be ready")
