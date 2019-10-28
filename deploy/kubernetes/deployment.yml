@@ -17,7 +17,7 @@ spec:
       containers:
         - name: csi-controller
           imagePullPolicy: Always
-          image: quay.io/lpabon/csi-controller:5
+          image: quay.io/lpabon/csi-controller:v0.1
           args:
             - "--v=3"
             - "--csi-address=$(ADDRESS)"
